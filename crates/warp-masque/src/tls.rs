@@ -148,6 +148,65 @@ pub fn tunnel_client_config(
     Ok(client)
 }
 
+/// Verifier that accepts any server certificate (still checks the handshake
+/// signature). Used only for the read-only egress trace, which fetches our own
+/// public trace page — a wrong cert would just yield wrong trace info, not leak
+/// anything.
+#[derive(Debug)]
+struct AcceptAny {
+    algs: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for AcceptAny {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algs.supported_schemes()
+    }
+}
+
+/// A rustls client config that accepts any server certificate, with the given
+/// ALPN. For the egress trace only — never for tunnel traffic.
+pub fn insecure_client_config(alpn: &[&[u8]]) -> Result<rustls::ClientConfig> {
+    let provider = rustls::crypto::ring::default_provider();
+    let algs = provider.signature_verification_algorithms;
+    let mut client = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| Error::Config(format!("rustls versions: {e}")))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptAny { algs }))
+        .with_no_client_auth();
+    client.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+    Ok(client)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

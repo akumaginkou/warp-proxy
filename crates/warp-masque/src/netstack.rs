@@ -14,8 +14,12 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::pin::Pin;
 use std::sync::mpsc as smpsc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant as StdInstant};
+
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
@@ -75,15 +79,71 @@ impl NetHandle {
             .send(Cmd::Connect { remote, from_net: from_net_tx, reply })
             .map_err(|_| "netstack stopped".to_string())?;
         let handle = rx.await.map_err(|_| "netstack dropped".to_string())??;
-        Ok(TcpConn { handle, cmd: self.cmd.clone(), from_net: from_net_rx })
+        Ok(TcpConn {
+            handle,
+            cmd: self.cmd.clone(),
+            from_net: from_net_rx,
+            read_buf: Vec::new(),
+            read_pos: 0,
+        })
     }
 }
 
-/// One outbound TCP connection through the netstack.
+impl AsyncRead for TcpConn {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let me = self.get_mut();
+        if me.read_pos >= me.read_buf.len() {
+            match me.from_net.poll_recv(cx) {
+                Poll::Ready(Some(v)) => {
+                    me.read_buf = v;
+                    me.read_pos = 0;
+                }
+                Poll::Ready(None) => return Poll::Ready(Ok(())), // EOF
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        let n = std::cmp::min(buf.remaining(), me.read_buf.len() - me.read_pos);
+        buf.put_slice(&me.read_buf[me.read_pos..me.read_pos + n]);
+        me.read_pos += n;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for TcpConn {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.cmd.send(Cmd::Send { handle: self.handle, data: buf.to_vec() }) {
+            Ok(()) => Poll::Ready(Ok(buf.len())),
+            Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let _ = self.cmd.send(Cmd::Close { handle: self.handle });
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// One outbound TCP connection through the netstack. Implements
+/// [`AsyncRead`]/[`AsyncWrite`], so it can back a TLS client or be spliced with
+/// `tokio::io::copy_bidirectional`.
 pub struct TcpConn {
     handle: SocketHandle,
     cmd: smpsc::Sender<Cmd>,
     from_net: tmpsc::Receiver<Vec<u8>>,
+    read_buf: Vec<u8>,
+    read_pos: usize,
 }
 
 impl TcpConn {

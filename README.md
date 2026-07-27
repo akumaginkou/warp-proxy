@@ -31,7 +31,9 @@ Built bottom-up (see the repo plan). Current state:
 - [x] HTTP/2 fallback (`--http2`) for QUIC-blocked networks: plain CONNECT +
       `cf-connect-proto` → 200, DATAGRAM capsules with Cloudflare's bare-IP quirk.
       Live-verified: `proxy --http2` → `warp=on`
-- [ ] account pool + front SOCKS5 LB + control API
+- [x] multi-account pool (N tunnels = N egress IPs) + front SOCKS5
+      load-balancer (round-robin / pin, WARP off = direct) + token-guarded
+      control HTTP API + egress trace — live-verified (`pool` example)
 - [ ] library API polish + daemon CLI
 
 The CONNECT-IP handshake uses a one-variant vendored patch to `h3` (see
@@ -53,6 +55,20 @@ cargo run -p warp-masque --example proxy -- ./warp-config.json 127.0.0.1:1080
 # in another shell:
 curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace   # -> warp=on
 ```
+
+### Run a multi-account pool + control API
+
+```sh
+cargo run -p warp-masque --example pool -- 2 127.0.0.1:1080 127.0.0.1:47100
+# round-robins across 2 egress IPs; drive it live (token printed on start):
+curl -H "X-Warp-Token: <token>" http://127.0.0.1:47100/api/status
+curl -H "X-Warp-Token: <token>" "http://127.0.0.1:47100/api/select?slot=1"   # pin account 1
+curl -H "X-Warp-Token: <token>" "http://127.0.0.1:47100/api/rotate?slot=1"   # new egress IP
+```
+
+Control endpoints (loopback, JSON, `X-Warp-Token` required): `/api/status`,
+`/api/toggle`, `/api/select`, `/api/rotate`, `/api/reconnect`, `/api/http2`,
+`/api/trace`, `/api/account/add`, `/api/account/remove`.
 
 ## Try registration
 

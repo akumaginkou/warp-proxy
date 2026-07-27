@@ -55,3 +55,7 @@ path = "examples/egress_probe.rs"
 [[example]]
 name = "proxy"
 path = "examples/proxy.rs"
+
+[[example]]
+name = "pool"
+path = "examples/pool.rs"

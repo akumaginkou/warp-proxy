@@ -120,7 +120,18 @@ the QUIC datagram budget (~1223).
   (non-RFC; matched to the `connect-ip-go` fork). Live-verified end to end:
   `proxy --http2` → `curl --socks5-hostname … /cdn-cgi/trace` = `warp=on`.
 
-Remaining: the multi-account pool + front LB + control API, and the daemon CLI.
+**Phase 3 (done):** `pool.rs` runs N accounts, each its own tunnel + netstack
+(one egress IP); every worker's netstack is swappable so it can reconnect / rotate
+/ switch transport live. `socks.rs::serve_pool` fronts them as a load-balancer
+(round-robin over ready workers, or pinned; WARP off and loopback go direct).
+`control.rs` is a compact token-guarded HTTP/1.1 control API
+(`/api/status|toggle|select|rotate|reconnect|http2|trace|account/add|remove`).
+`trace.rs` fetches `cdn-cgi/trace` over TLS through a worker to report its egress
+IP / colo / warp state. Live-verified: two egress IPs round-robin, pin sticks,
+WARP-off goes direct (real IP), rotate yields a fresh egress, trace reports
+`warp=on`.
+
+Remaining: library-API polish + the daemon CLI (handshake JSON) and packaging.
 
 ## Netstack, pool, control (later phases)
 

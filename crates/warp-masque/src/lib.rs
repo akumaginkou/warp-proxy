@@ -13,14 +13,17 @@
 //! the provenance stays clean.
 
 pub mod config;
+pub mod control;
 pub mod doh;
 pub mod error;
 pub mod h2tunnel;
 pub mod keys;
 pub mod netstack;
+pub mod pool;
 pub mod register;
 pub mod socks;
 pub mod tls;
+pub mod trace;
 pub mod tunnel;
 
 pub use config::WarpConfig;
