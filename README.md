@@ -123,4 +123,15 @@ CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc cargo build --release --target x
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). Bundles a patched copy of `h3` (Apache-2.0/MIT).
+Licensed under either of
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in this project by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional
+terms or conditions.
+
+Bundles a patched copy of [`h3`](vendor/h3) (Apache-2.0 OR MIT); see
+[`vendor/h3/PATCH.md`](vendor/h3/PATCH.md).
