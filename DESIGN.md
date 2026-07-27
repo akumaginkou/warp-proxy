@@ -144,6 +144,15 @@ C compiler for `ring`.
 All planned phases are complete; the HTTP/3 path and the multi-account pool are
 the production path, HTTP/2 is the QUIC-blocked fallback.
 
+**Resilience & ops:** each worker runs a supervisor — the tunnel exposes a
+watch signal that flips when the transport dies (a watcher on the QUIC
+connection for H3, or the H2 connection driver ending), and the supervisor
+reconnects with exponential backoff (capped at 30s); `/api/reconnect`,
+`/api/rotate`, and the `http2` toggle rebuild through the same path. An optional
+timer (`/api/interval`, clamped to ≥60s) rotates one account to a fresh egress on
+a cadence. CI (GitHub Actions) runs fmt · clippy (`-D warnings` on our crates,
+the vendored `h3` left at its own level) · build · test on Linux and Windows.
+
 ## Netstack, pool, control (later phases)
 
 - A userspace TCP/IP stack (`smoltcp`) terminates the tunneled IP packets so a

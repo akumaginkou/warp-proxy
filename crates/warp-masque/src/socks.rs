@@ -23,7 +23,9 @@ const ATYP_V6: u8 = 0x04;
 /// Serve SOCKS5 on `listener`, routing every CONNECT through `net`.
 pub async fn serve(listener: TcpListener, net: NetHandle) {
     loop {
-        let Ok((client, _)) = listener.accept().await else { continue };
+        let Ok((client, _)) = listener.accept().await else {
+            continue;
+        };
         let net = net.clone();
         tokio::spawn(async move {
             let _ = handle_single(client, net).await;
@@ -41,7 +43,9 @@ async fn handle_single(mut client: TcpStream, net: NetHandle) -> std::io::Result
 /// Serve SOCKS5 on `listener`, load-balancing across the account [`Pool`].
 pub async fn serve_pool(listener: TcpListener, pool: Arc<Pool>) {
     loop {
-        let Ok((client, _)) = listener.accept().await else { continue };
+        let Ok((client, _)) = listener.accept().await else {
+            continue;
+        };
         let pool = pool.clone();
         tokio::spawn(async move {
             let _ = handle_pool(client, pool).await;
@@ -158,7 +162,9 @@ fn is_loopback_host(host: &str) -> bool {
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
-    host.parse::<IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 /// Splice the client and the tunnelled connection until either ends.

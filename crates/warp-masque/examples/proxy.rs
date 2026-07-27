@@ -39,8 +39,16 @@ async fn main() -> anyhow::Result<()> {
 
     eprintln!("Establishing MASQUE tunnel ({transport:?})…");
     let tunnel = Tunnel::connect_with(&cfg, &kp, transport).await?;
-    anyhow::ensure!(tunnel.status().is_success(), "tunnel not up: {}", tunnel.status());
-    eprintln!("Tunnel up. Assigned {} / {:?}", tunnel.assigned_v4(), tunnel.assigned_v6());
+    anyhow::ensure!(
+        tunnel.status().is_success(),
+        "tunnel not up: {}",
+        tunnel.status()
+    );
+    eprintln!(
+        "Tunnel up. Assigned {} / {:?}",
+        tunnel.assigned_v4(),
+        tunnel.assigned_v6()
+    );
 
     let net = netstack::spawn(tunnel.io(), tunnel.assigned_v4(), tunnel.assigned_v6());
 

@@ -14,9 +14,7 @@ use std::sync::Arc;
 use p256::pkcs8::{DecodePublicKey, EncodePrivateKey};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::WebPkiSupportedAlgorithms;
-use rustls::pki_types::{
-    CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
-};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use x509_cert::der::{Decode, Encode};
 
@@ -40,14 +38,12 @@ pub fn self_signed_identity(kp: &DeviceKeypair) -> Result<ClientIdentity> {
         .map_err(|e| Error::Key(format!("pkcs8 encode: {e}")))?;
     let key_der = PrivatePkcs8KeyDer::from(pkcs8.as_bytes().to_vec());
 
-    let rcgen_key = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
-        &key_der,
-        &rcgen::PKCS_ECDSA_P256_SHA256,
-    )
-    .map_err(|e| Error::Key(format!("rcgen key: {e}")))?;
+    let rcgen_key =
+        rcgen::KeyPair::from_pkcs8_der_and_sign_algo(&key_der, &rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| Error::Key(format!("rcgen key: {e}")))?;
 
-    let mut params =
-        rcgen::CertificateParams::new(Vec::<String>::new()).map_err(|e| Error::Key(e.to_string()))?;
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new())
+        .map_err(|e| Error::Key(e.to_string()))?;
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now - time::Duration::hours(1);
     params.not_after = now + time::Duration::hours(24);

@@ -25,7 +25,9 @@ use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::{dns, tcp};
 use smoltcp::time::Instant;
-use smoltcp::wire::{DnsQueryType, HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint};
+use smoltcp::wire::{
+    DnsQueryType, HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint,
+};
 use tokio::sync::{mpsc as tmpsc, oneshot};
 
 use crate::tunnel::TunnelIo;
@@ -66,7 +68,10 @@ impl NetHandle {
     pub async fn resolve(&self, name: &str) -> Result<IpAddr, String> {
         let (reply, rx) = oneshot::channel();
         self.cmd
-            .send(Cmd::Resolve { name: name.to_string(), reply })
+            .send(Cmd::Resolve {
+                name: name.to_string(),
+                reply,
+            })
             .map_err(|_| "netstack stopped".to_string())?;
         rx.await.map_err(|_| "netstack dropped".to_string())?
     }
@@ -76,7 +81,11 @@ impl NetHandle {
         let (from_net_tx, from_net_rx) = tmpsc::channel(CHAN_DEPTH);
         let (reply, rx) = oneshot::channel();
         self.cmd
-            .send(Cmd::Connect { remote, from_net: from_net_tx, reply })
+            .send(Cmd::Connect {
+                remote,
+                from_net: from_net_tx,
+                reply,
+            })
             .map_err(|_| "netstack stopped".to_string())?;
         let handle = rx.await.map_err(|_| "netstack dropped".to_string())??;
         Ok(TcpConn {
@@ -119,7 +128,10 @@ impl AsyncWrite for TcpConn {
         _cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        match self.cmd.send(Cmd::Send { handle: self.handle, data: buf.to_vec() }) {
+        match self.cmd.send(Cmd::Send {
+            handle: self.handle,
+            data: buf.to_vec(),
+        }) {
             Ok(()) => Poll::Ready(Ok(buf.len())),
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         }
@@ -130,7 +142,9 @@ impl AsyncWrite for TcpConn {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        let _ = self.cmd.send(Cmd::Close { handle: self.handle });
+        let _ = self.cmd.send(Cmd::Close {
+            handle: self.handle,
+        });
         Poll::Ready(Ok(()))
     }
 }
@@ -154,19 +168,29 @@ impl TcpConn {
 
     /// Queue bytes to send to the remote.
     pub fn send(&self, data: Vec<u8>) {
-        let _ = self.cmd.send(Cmd::Send { handle: self.handle, data });
+        let _ = self.cmd.send(Cmd::Send {
+            handle: self.handle,
+            data,
+        });
     }
 
     /// Ask the netstack to close the sending half once drained.
     pub fn close(&self) {
-        let _ = self.cmd.send(Cmd::Close { handle: self.handle });
+        let _ = self.cmd.send(Cmd::Close {
+            handle: self.handle,
+        });
     }
 
     /// Split into independent read/write halves for concurrent relaying.
     pub fn into_split(self) -> (TcpReader, TcpWriter) {
         (
-            TcpReader { from_net: self.from_net },
-            TcpWriter { handle: self.handle, cmd: self.cmd },
+            TcpReader {
+                from_net: self.from_net,
+            },
+            TcpWriter {
+                handle: self.handle,
+                cmd: self.cmd,
+            },
         )
     }
 }
@@ -192,12 +216,17 @@ pub struct TcpWriter {
 impl TcpWriter {
     /// Queue bytes to send to the remote.
     pub fn send(&self, data: Vec<u8>) {
-        let _ = self.cmd.send(Cmd::Send { handle: self.handle, data });
+        let _ = self.cmd.send(Cmd::Send {
+            handle: self.handle,
+            data,
+        });
     }
 
     /// Close the sending half once drained.
     pub fn close(&self) {
-        let _ = self.cmd.send(Cmd::Close { handle: self.handle });
+        let _ = self.cmd.send(Cmd::Close {
+            handle: self.handle,
+        });
     }
 }
 
@@ -217,14 +246,9 @@ pub fn spawn(io: TunnelIo, assigned_v4: Ipv4Addr, assigned_v6: Option<Ipv6Addr>)
     let feeder_io = io.clone();
     let feeder_cmd = cmd_tx.clone();
     tokio::spawn(async move {
-        loop {
-            match feeder_io.recv_ip().await {
-                Ok(pkt) => {
-                    if feeder_cmd.send(Cmd::Inbound(pkt)).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(pkt) = feeder_io.recv_ip().await {
+            if feeder_cmd.send(Cmd::Inbound(pkt)).is_err() {
+                break;
             }
         }
     });
@@ -265,7 +289,11 @@ struct Actor {
 
 impl Actor {
     fn new(io: TunnelIo, mtu: usize, v4: Ipv4Addr, v6: Option<Ipv6Addr>) -> Self {
-        let mut device = TunDevice { rx: VecDeque::new(), tx: Vec::new(), mtu };
+        let mut device = TunDevice {
+            rx: VecDeque::new(),
+            tx: Vec::new(),
+            mtu,
+        };
         let start = StdInstant::now();
         let mut iface = Interface::new(
             Config::new(HardwareAddress::Ip),
@@ -312,7 +340,11 @@ impl Actor {
 
     fn next_ephemeral_port(&mut self) -> u16 {
         let p = self.next_port;
-        self.next_port = if self.next_port >= 65535 { 49152 } else { self.next_port + 1 };
+        self.next_port = if self.next_port == 65535 {
+            49152
+        } else {
+            self.next_port + 1
+        };
         p
     }
 
@@ -353,7 +385,11 @@ impl Actor {
     fn handle_cmd(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Inbound(pkt) => self.device.rx.push_back(pkt),
-            Cmd::Connect { remote, from_net, reply } => self.handle_connect(remote, from_net, reply),
+            Cmd::Connect {
+                remote,
+                from_net,
+                reply,
+            } => self.handle_connect(remote, from_net, reply),
             Cmd::Send { handle, data } => {
                 if let Some(conn) = self.conns.get_mut(&handle) {
                     conn.out_buf.extend(data);
@@ -379,7 +415,10 @@ impl Actor {
         let handle = self.sockets.add(tcp::Socket::new(rx, tx));
         let local_port = self.next_ephemeral_port();
         let remote_ep = IpEndpoint::new(to_ip(remote.ip()), remote.port());
-        let local_ep = IpListenEndpoint { addr: None, port: local_port };
+        let local_ep = IpListenEndpoint {
+            addr: None,
+            port: local_port,
+        };
 
         let iface = &mut self.iface;
         let sock = self.sockets.get_mut::<tcp::Socket>(handle);
@@ -453,7 +492,9 @@ impl Actor {
 
                 // net -> socks (bounded by the channel to apply TCP backpressure)
                 while sock.can_recv() {
-                    let Ok(permit) = conn.from_net.try_reserve() else { break };
+                    let Ok(permit) = conn.from_net.try_reserve() else {
+                        break;
+                    };
                     let mut buf = [0u8; RECV_CHUNK];
                     match sock.recv_slice(&mut buf) {
                         Ok(0) => break,

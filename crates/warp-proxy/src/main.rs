@@ -43,7 +43,9 @@ fn parse_args() -> Args {
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--accounts" => a.accounts = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.accounts),
+            "--accounts" => {
+                a.accounts = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.accounts)
+            }
             "--socks" => a.socks = it.next().unwrap_or(a.socks),
             "--control" => a.control = it.next().unwrap_or(a.control),
             "--state-dir" => a.state_dir = it.next().map(PathBuf::from),
@@ -87,7 +89,10 @@ async fn main() -> anyhow::Result<()> {
     use std::io::Write;
     let _ = std::io::stdout().flush();
 
-    eprintln!("[warp-proxy] SOCKS5 on {} · control http://{control_addr}", socks_listener.local_addr()?);
+    eprintln!(
+        "[warp-proxy] SOCKS5 on {} · control http://{control_addr}",
+        socks_listener.local_addr()?
+    );
 
     tokio::spawn(control::serve(control_listener, pool.clone(), token));
     tokio::spawn(socks::serve_pool(socks_listener, pool));
@@ -99,7 +104,10 @@ async fn main() -> anyhow::Result<()> {
 
 /// Load persisted account configs from `state_dir` (registering any that are
 /// missing and saving them), or register `n` throwaway accounts if no dir given.
-async fn load_or_register(state_dir: Option<&std::path::Path>, n: usize) -> anyhow::Result<Vec<WarpConfig>> {
+async fn load_or_register(
+    state_dir: Option<&std::path::Path>,
+    n: usize,
+) -> anyhow::Result<Vec<WarpConfig>> {
     let mut out = Vec::with_capacity(n);
     for i in 1..=n {
         let opts = RegisterOptions {
@@ -110,13 +118,17 @@ async fn load_or_register(state_dir: Option<&std::path::Path>, n: usize) -> anyh
             let path = dir.join(format!("account-{i}.json"));
             if path.exists() {
                 eprintln!("[warp-proxy] loading account {i} from {}", path.display());
-                out.push(WarpConfig::load(&path).with_context(|| format!("loading {}", path.display()))?);
+                out.push(
+                    WarpConfig::load(&path)
+                        .with_context(|| format!("loading {}", path.display()))?,
+                );
                 continue;
             }
             eprintln!("[warp-proxy] registering account {i}…");
             let cfg = RegistrationClient::register_auto(&opts).await?;
             std::fs::create_dir_all(dir).ok();
-            cfg.save(&path).with_context(|| format!("saving {}", path.display()))?;
+            cfg.save(&path)
+                .with_context(|| format!("saving {}", path.display()))?;
             out.push(cfg);
         } else {
             eprintln!("[warp-proxy] registering account {i} (ephemeral)…");

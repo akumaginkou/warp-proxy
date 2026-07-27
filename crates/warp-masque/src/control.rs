@@ -17,7 +17,9 @@ use crate::pool::Pool;
 pub async fn serve(listener: TcpListener, pool: Arc<Pool>, token: String) {
     let token = Arc::new(token);
     loop {
-        let Ok((conn, _)) = listener.accept().await else { continue };
+        let Ok((conn, _)) = listener.accept().await else {
+            continue;
+        };
         let pool = pool.clone();
         let token = token.clone();
         tokio::spawn(async move {
@@ -55,7 +57,9 @@ async fn handle(mut conn: TcpStream, pool: Arc<Pool>, token: Arc<String>) -> std
     let presented = lines
         .find_map(|l| {
             let (k, v) = l.split_once(':')?;
-            k.trim().eq_ignore_ascii_case("x-warp-token").then(|| v.trim().to_string())
+            k.trim()
+                .eq_ignore_ascii_case("x-warp-token")
+                .then(|| v.trim().to_string())
         })
         .unwrap_or_default();
     if presented != *token {
@@ -78,19 +82,20 @@ async fn route(pool: &Arc<Pool>, path: &str, query: &str) -> Result<String, Stri
         "/api/status" => {}
         "/api/toggle" => pool.set_enabled(bool_param(query, "on", true)),
         "/api/select" => pool.select(int_param(query, "slot").unwrap_or(0) as usize),
-        "/api/reconnect" => pool
-            .reconnect(int_param(query, "slot").unwrap_or(0) as usize)
-            .await
-            .map_err(|e| e.to_string())?,
+        "/api/reconnect" => pool.reconnect(int_param(query, "slot").unwrap_or(0) as usize),
         "/api/rotate" => pool
             .rotate(int_param(query, "slot").unwrap_or(0) as usize)
             .await
             .map_err(|e| e.to_string())?,
-        "/api/http2" => pool
-            .set_http2(bool_param(query, "on", false))
-            .await
-            .map_err(|e| e.to_string())?,
-        "/api/trace" => pool.refresh_trace(int_param(query, "slot").unwrap_or(0) as usize).await,
+        "/api/http2" => pool.set_http2(bool_param(query, "on", false)),
+        "/api/interval" => {
+            let secs = int_param(query, "seconds").unwrap_or(0).max(0) as u64;
+            pool.set_rotate_interval(secs);
+        }
+        "/api/trace" => {
+            pool.refresh_trace(int_param(query, "slot").unwrap_or(0) as usize)
+                .await
+        }
         "/api/account/add" => {
             pool.add_account().await.map_err(|e| e.to_string())?;
         }
@@ -123,7 +128,10 @@ fn param(query: &str, key: &str) -> Option<String> {
 }
 
 fn json_string(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ");
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ");
     format!("\"{escaped}\"")
 }
 

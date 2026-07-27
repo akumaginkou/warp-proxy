@@ -12,20 +12,31 @@ use warp_masque::{DeviceKeypair, WarpConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "warp-config.json".into());
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "warp-config.json".into());
     let cfg = WarpConfig::load(&path)?;
     let kp = DeviceKeypair::from_private_b64(&cfg.private_key)?;
 
-    eprintln!("Establishing MASQUE tunnel to {} (cf-connect-ip)…", cfg.endpoint_v4);
+    eprintln!(
+        "Establishing MASQUE tunnel to {} (cf-connect-ip)…",
+        cfg.endpoint_v4
+    );
     let tunnel = Tunnel::connect(&cfg, &kp).await?;
     eprintln!("CONNECT-IP response status: {}", tunnel.status());
     if tunnel.status().is_success() {
-        eprintln!("✅ MASQUE tunnel established (HTTP {}).", tunnel.status().as_u16());
+        eprintln!(
+            "✅ MASQUE tunnel established (HTTP {}).",
+            tunnel.status().as_u16()
+        );
         eprintln!("  assigned v4 : {}", tunnel.assigned_v4());
         eprintln!("  assigned v6 : {:?}", tunnel.assigned_v6());
         eprintln!("  max IP pkt  : {} bytes", tunnel.max_ip_packet());
     } else {
-        eprintln!("⚠️  endpoint refused the CONNECT-IP session (HTTP {}).", tunnel.status().as_u16());
+        eprintln!(
+            "⚠️  endpoint refused the CONNECT-IP session (HTTP {}).",
+            tunnel.status().as_u16()
+        );
     }
     Ok(())
 }

@@ -37,7 +37,11 @@ async fn main() -> anyhow::Result<()> {
 
     eprintln!("Connecting ({transport:?})…");
     let tunnel = Tunnel::connect_with(&cfg, &kp, transport).await?;
-    anyhow::ensure!(tunnel.status().is_success(), "tunnel not up: {}", tunnel.status());
+    anyhow::ensure!(
+        tunnel.status().is_success(),
+        "tunnel not up: {}",
+        tunnel.status()
+    );
     let src = tunnel.assigned_v4();
     eprintln!("Tunnel up. Assigned WARP IPv4: {src}");
 
@@ -48,7 +52,9 @@ async fn main() -> anyhow::Result<()> {
     for attempt in 1..=4 {
         tunnel.send_ip(&packet)?;
         eprintln!("Sent DNS query through the tunnel (attempt {attempt})…");
-        match tokio::time::timeout(Duration::from_secs(3), recv_udp_from(&tunnel, RESOLVER, 53)).await {
+        match tokio::time::timeout(Duration::from_secs(3), recv_udp_from(&tunnel, RESOLVER, 53))
+            .await
+        {
             Ok(Ok(payload)) => {
                 match parse_first_txt(&payload) {
                     Some(txt) => {

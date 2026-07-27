@@ -30,7 +30,10 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = if doh {
         eprintln!("Registering via DoH bypass (pinned api.cloudflareclient.com)…");
-        RegistrationClient::with_doh_bypass().await?.register(&opts).await?
+        RegistrationClient::with_doh_bypass()
+            .await?
+            .register(&opts)
+            .await?
     } else {
         eprintln!("Registering a new WARP MASQUE device (auto direct→DoH)…");
         RegistrationClient::register_auto(&opts).await?

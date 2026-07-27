@@ -1,5 +1,7 @@
 # warp-proxy
 
+[![CI](https://github.com/akumaginkou/warp-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/akumaginkou/warp-proxy/actions/workflows/ci.yml)
+
 A clean-room, portable **Cloudflare WARP over MASQUE** proxy in Rust.
 
 It registers free WARP accounts, runs one MASQUE (CONNECT-IP / HTTP-3) tunnel
@@ -36,6 +38,9 @@ Built bottom-up (see the repo plan). Current state:
       control HTTP API + egress trace — live-verified (`pool` example)
 - [x] `warp-proxy` daemon (handshake JSON on stdout, account persistence,
       graceful SIGINT/SIGTERM) — usable from any language as a subprocess
+- [x] per-worker supervisor (auto-reconnect with exponential backoff on tunnel
+      death), auto-rotate timer (`/api/interval`), and GitHub Actions CI
+      (fmt · clippy · build · test on Linux + Windows)
 
 The CONNECT-IP handshake uses a one-variant vendored patch to `h3` (see
 [`vendor/h3/PATCH.md`](vendor/h3/PATCH.md)) so `:protocol` can carry Cloudflare's
@@ -93,7 +98,8 @@ curl -H "X-Warp-Token: <token>" "http://127.0.0.1:47100/api/rotate?slot=1"   # n
 
 Control endpoints (loopback, JSON, `X-Warp-Token` required): `/api/status`,
 `/api/toggle`, `/api/select`, `/api/rotate`, `/api/reconnect`, `/api/http2`,
-`/api/trace`, `/api/account/add`, `/api/account/remove`.
+`/api/interval` (auto-rotate seconds), `/api/trace`, `/api/account/add`,
+`/api/account/remove`.
 
 ## Layout
 

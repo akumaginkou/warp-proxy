@@ -90,8 +90,11 @@ pub async fn connect_h2(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<Tunnel> 
     let (mut send_req, connection) = h2::client::handshake(tls)
         .await
         .map_err(|e| Error::Tunnel(format!("h2 handshake: {e}")))?;
+    // Signal death when the HTTP/2 connection ends.
+    let (dead_tx, dead_rx) = tokio::sync::watch::channel(false);
     let conn_driver = tokio::spawn(async move {
         let _ = connection.await;
+        let _ = dead_tx.send(true);
     });
 
     // Cloudflare's H2 endpoint does NOT advertise RFC 8441 extended CONNECT;
@@ -134,12 +137,11 @@ pub async fn connect_h2(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<Tunnel> 
         status,
         assigned_v4,
         assigned_v6,
+        dead_rx,
         vec![Box::new(conn_driver), Box::new(writer), Box::new(reader)],
     ))
 }
 
-/// Drain outbound IP packets and write them as DATAGRAM capsules, honouring
-/// HTTP/2 flow control.
 /// Frame an IP packet as a DATAGRAM capsule. Cloudflare's H2 quirk: the capsule
 /// value is the bare IP packet — the connect-ip context id (0) is NOT included
 /// (verified against the `connect-ip-go` fork's `SendDatagram`).
@@ -165,7 +167,12 @@ fn parse_capsule(buf: &[u8]) -> Option<(u64, usize, usize)> {
     Some((ctype, header, header + clen))
 }
 
-async fn writer_loop(mut send: h2::SendStream<Bytes>, mut out_rx: mpsc::UnboundedReceiver<Vec<u8>>) {
+/// Drain outbound IP packets and write them as DATAGRAM capsules, honouring
+/// HTTP/2 flow control.
+async fn writer_loop(
+    mut send: h2::SendStream<Bytes>,
+    mut out_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+) {
     while let Some(pkt) = out_rx.recv().await {
         let cap = encode_datagram_capsule(&pkt);
 

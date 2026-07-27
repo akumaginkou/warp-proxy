@@ -71,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
 /// per-account keys' entropy is overkill for a local demo).
 fn gen_token() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     format!("{nanos:x}")
 }

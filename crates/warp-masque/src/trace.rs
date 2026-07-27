@@ -28,8 +28,14 @@ const TRACE_HOST: &str = "www.cloudflare.com";
 pub async fn fetch_trace(net: &NetHandle) -> TraceInfo {
     match tokio::time::timeout(Duration::from_secs(15), do_fetch(net)).await {
         Ok(Ok(info)) => info,
-        Ok(Err(e)) => TraceInfo { err: Some(e), ..Default::default() },
-        Err(_) => TraceInfo { err: Some("trace timeout".into()), ..Default::default() },
+        Ok(Err(e)) => TraceInfo {
+            err: Some(e),
+            ..Default::default()
+        },
+        Err(_) => TraceInfo {
+            err: Some("trace timeout".into()),
+            ..Default::default()
+        },
     }
 }
 
@@ -40,12 +46,17 @@ async fn do_fetch(net: &NetHandle) -> Result<TraceInfo, String> {
     let cfg = insecure_client_config(&[b"http/1.1"]).map_err(|e| e.to_string())?;
     let connector = tokio_rustls::TlsConnector::from(Arc::new(cfg));
     let sni = rustls::pki_types::ServerName::try_from(TRACE_HOST).map_err(|e| e.to_string())?;
-    let mut tls = connector.connect(sni, conn).await.map_err(|e| e.to_string())?;
+    let mut tls = connector
+        .connect(sni, conn)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let req = format!(
         "GET /cdn-cgi/trace HTTP/1.1\r\nHost: {TRACE_HOST}\r\nUser-Agent: warp-proxy\r\nAccept: */*\r\nConnection: close\r\n\r\n"
     );
-    tls.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+    tls.write_all(req.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut buf = Vec::new();
     tls.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;

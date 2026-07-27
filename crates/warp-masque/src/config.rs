@@ -4,15 +4,15 @@
 //! The JSON schema is kept byte-compatible with the reference WARP MASQUE client
 //! (`config.json`) so the two are interchangeable and easy to diff during
 //! bring-up. Field meanings:
-//! - `private_key`     : base64(SEC1 DER) of the device's P-256 private key.
-//! - `endpoint_v4/v6`  : MASQUE anycast endpoints (QUIC/HTTP-3), no port.
+//! - `private_key`: base64(SEC1 DER) of the device's P-256 private key.
+//! - `endpoint_v4/v6`: MASQUE anycast endpoints (QUIC/HTTP-3), no port.
 //! - `endpoint_h2_v4/6`: endpoints used in the HTTP/2 (QUIC-blocked) fallback.
 //! - `endpoint_pub_key`: PEM-encoded P-256 public key of the endpoint, pinned
-//!                       during the tunnel TLS handshake.
+//!   during the tunnel TLS handshake.
 //! - `id` / `access_token`: device id and REST bearer token (REST only; the
-//!                       tunnel does not use the token).
-//! - `ipv4` / `ipv6`   : the addresses Cloudflare assigned to us inside the
-//!                       tunnel (static; there is no ADDRESS_ASSIGN capsule).
+//!   tunnel does not use the token).
+//! - `ipv4` / `ipv6`: the addresses Cloudflare assigned to us inside the tunnel
+//!   (static; there is no ADDRESS_ASSIGN capsule).
 
 use std::path::Path;
 

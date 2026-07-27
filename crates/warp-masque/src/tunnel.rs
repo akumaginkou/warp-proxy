@@ -161,6 +161,10 @@ pub struct Tunnel {
     status: http::StatusCode,
     assigned_v4: Ipv4Addr,
     assigned_v6: Option<Ipv6Addr>,
+    // Flips to `true` when the underlying transport dies, so a supervisor can
+    // reconnect. Fed by a watcher on the QUIC connection (H3) or the connection
+    // driver task (H2).
+    dead: tokio::sync::watch::Receiver<bool>,
     // Keep-alive resources held for the tunnel's lifetime (QUIC endpoint + h3
     // driver + streams for HTTP/3; the connection driver + pump tasks for
     // HTTP/2). Dropping the tunnel tears them down.
@@ -186,15 +190,30 @@ impl Tunnel {
         }
     }
 
-    /// Assemble a tunnel from its I/O half + keep-alive resources.
+    /// Assemble a tunnel from its I/O half, a transport-death signal, and
+    /// keep-alive resources.
     pub(crate) fn from_parts(
         io: TunnelIo,
         status: http::StatusCode,
         assigned_v4: Ipv4Addr,
         assigned_v6: Option<Ipv6Addr>,
+        dead: tokio::sync::watch::Receiver<bool>,
         keep: Vec<Box<dyn std::any::Any + Send>>,
     ) -> Tunnel {
-        Tunnel { io, status, assigned_v4, assigned_v6, _keep: keep }
+        Tunnel {
+            io,
+            status,
+            assigned_v4,
+            assigned_v6,
+            dead,
+            _keep: keep,
+        }
+    }
+
+    /// A watch receiver that flips to `true` when the transport dies. Clone it
+    /// and `await` a change to supervise the tunnel.
+    pub fn dead_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.dead.clone()
     }
 
     /// HTTP/3 handshake: QUIC dial (mTLS + pinning) → datagrams → Extended
@@ -216,6 +235,14 @@ impl Tunnel {
 
         let driver_handle = tokio::spawn(async move {
             let _ = std::future::poll_fn(|cx| driver.poll_close(cx)).await;
+        });
+
+        // Signal death when the QUIC connection closes.
+        let (dead_tx, dead_rx) = tokio::sync::watch::channel(false);
+        let watch_conn = dgram_conn.clone();
+        tokio::spawn(async move {
+            watch_conn.closed().await;
+            let _ = dead_tx.send(true);
         });
 
         let req = http::Request::builder()
@@ -246,10 +273,14 @@ impl Tunnel {
         let assigned_v6 = parse_assigned_v6(&cfg.ipv6);
 
         Ok(Tunnel::from_parts(
-            TunnelIo::H3(H3Io { quic: dgram_conn, quarter_stream_id }),
+            TunnelIo::H3(H3Io {
+                quic: dgram_conn,
+                quarter_stream_id,
+            }),
             status,
             assigned_v4,
             assigned_v6,
+            dead_rx,
             vec![
                 Box::new(endpoint),
                 Box::new(driver_handle),
@@ -359,14 +390,16 @@ impl H3Io {
         encode_varint(&mut buf, self.quarter_stream_id);
         encode_varint(&mut buf, CONTEXT_ID_FULL_PACKET);
         buf.extend_from_slice(packet);
-        self.quic.send_datagram(bytes::Bytes::from(buf)).map_err(|e| {
-            let reason = self
-                .quic
-                .close_reason()
-                .map(|r| format!(" (close reason: {r})"))
-                .unwrap_or_default();
-            Error::Tunnel(format!("send datagram: {e}{reason}"))
-        })
+        self.quic
+            .send_datagram(bytes::Bytes::from(buf))
+            .map_err(|e| {
+                let reason = self
+                    .quic
+                    .close_reason()
+                    .map(|r| format!(" (close reason: {r})"))
+                    .unwrap_or_default();
+                Error::Tunnel(format!("send datagram: {e}{reason}"))
+            })
     }
 
     /// Receive one IP packet from the tunnel. Datagrams for other flows or with
@@ -462,7 +495,17 @@ mod tests {
     #[test]
     fn varint_roundtrips_across_size_classes() {
         // QUIC varints span 0..=2^62-1.
-        for v in [0u64, 63, 64, 16383, 16384, 1 << 29, 1 << 30, u64::from(u32::MAX), (1 << 62) - 1] {
+        for v in [
+            0u64,
+            63,
+            64,
+            16383,
+            16384,
+            1 << 29,
+            1 << 30,
+            u64::from(u32::MAX),
+            (1 << 62) - 1,
+        ] {
             let mut buf = Vec::new();
             encode_varint(&mut buf, v);
             assert_eq!(buf.len(), varint_len(v), "len mismatch for {v}");
@@ -481,8 +524,14 @@ mod tests {
 
     #[test]
     fn parses_assigned_addresses() {
-        assert_eq!(parse_assigned_v4("172.16.0.2").unwrap(), Ipv4Addr::new(172, 16, 0, 2));
-        assert_eq!(parse_assigned_v4("172.16.0.2/32").unwrap(), Ipv4Addr::new(172, 16, 0, 2));
+        assert_eq!(
+            parse_assigned_v4("172.16.0.2").unwrap(),
+            Ipv4Addr::new(172, 16, 0, 2)
+        );
+        assert_eq!(
+            parse_assigned_v4("172.16.0.2/32").unwrap(),
+            Ipv4Addr::new(172, 16, 0, 2)
+        );
         assert!(parse_assigned_v6("2606:4700:110::1/128").is_some());
         assert!(parse_assigned_v6("").is_none());
     }
