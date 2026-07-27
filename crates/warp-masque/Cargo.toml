@@ -1,0 +1,55 @@
+[package]
+name = "warp-masque"
+description = "Clean-room Rust client for Cloudflare WARP over MASQUE (CONNECT-IP): device registration, tunnel, netstack."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+p256.workspace = true
+rand.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+
+# --- tunnel (Phase 0b): QUIC + mTLS, all on the `ring` provider so it builds
+# without a C toolchain (no cmake/nasm for aws-lc / BoringSSL) ---
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+quinn-proto = { version = "0.11", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+rcgen = { version = "0.13", default-features = false, features = ["ring"] }
+x509-cert = { version = "0.2", features = ["std"] }
+time = { version = "0.3", default-features = false, features = ["std"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+h3-datagram = "0.0.2"
+http = "1"
+bytes = "1"
+smoltcp = "0.12.0"
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[[example]]
+name = "register"
+path = "examples/register.rs"
+
+[[example]]
+name = "tunnel_poc"
+path = "examples/tunnel_poc.rs"
+
+[[example]]
+name = "egress_probe"
+path = "examples/egress_probe.rs"
+
+[[example]]
+name = "proxy"
+path = "examples/proxy.rs"

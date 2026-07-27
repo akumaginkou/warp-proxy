@@ -1,0 +1,5 @@
+/target
+# Cargo.lock is committed (workspace ships binaries/examples) for reproducible builds.
+# local registration output / secrets — never commit
+warp-config.json
+*.warp-config.json

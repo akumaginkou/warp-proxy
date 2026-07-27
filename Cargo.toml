@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/warp-masque",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/akumaginkou/warp-proxy"
+authors = ["akumaginkou"]
+
+# Vendored h3 with a one-variant patch adding the `cf-connect-ip` `:protocol`
+# token Cloudflare's MASQUE endpoint requires (upstream only ships
+# webtransport/connect-udp). See vendor/h3/src/ext.rs.
+[patch.crates-io]
+h3 = { path = "vendor/h3" }
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+thiserror = "2"
+anyhow = "1"
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem", "std"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
