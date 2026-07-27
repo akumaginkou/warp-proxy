@@ -5,13 +5,9 @@
 //! extended CONNECT (`SETTINGS_ENABLE_CONNECT_PROTOCOL=false`), so this uses a
 //! **plain CONNECT** to the authority plus a `cf-connect-proto: cf-connect-ip`
 //! header to select connect-ip. IP packets travel as **DATAGRAM capsules**
-//! (RFC 9297, type `0x00`) carrying `varint(context_id=0) || <IP packet>`.
-//!
-//! Status: **experimental.** The handshake succeeds (HTTP 200), but Cloudflare's
-//! H2 datagram plane is non-RFC (the reference client forks `connect-ip-go` for
-//! it) and does not round-trip standard capsules in testing — the exact H2
-//! datagram framing still needs reverse-engineering. HTTP/3 is the working
-//! default; use this only for QUIC-blocked networks once completed.
+//! (type `0x00`), and — Cloudflare's non-RFC quirk — the capsule value is the
+//! **bare IP packet**: the connect-ip context id (0) is omitted, not included as
+//! RFC 9297 would (matched to the `connect-ip-go` fork Cloudflare's client uses).
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -144,17 +140,34 @@ pub async fn connect_h2(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<Tunnel> 
 
 /// Drain outbound IP packets and write them as DATAGRAM capsules, honouring
 /// HTTP/2 flow control.
+/// Frame an IP packet as a DATAGRAM capsule. Cloudflare's H2 quirk: the capsule
+/// value is the bare IP packet — the connect-ip context id (0) is NOT included
+/// (verified against the `connect-ip-go` fork's `SendDatagram`).
+fn encode_datagram_capsule(pkt: &[u8]) -> Vec<u8> {
+    let mut cap = Vec::with_capacity(pkt.len() + 8);
+    encode_varint(&mut cap, CAPSULE_DATAGRAM);
+    encode_varint(&mut cap, pkt.len() as u64);
+    cap.extend_from_slice(pkt);
+    cap
+}
+
+/// Parse one capsule at the front of `buf`, returning `(type, value_offset,
+/// total_len)`, or `None` if the capsule has not fully arrived.
+fn parse_capsule(buf: &[u8]) -> Option<(u64, usize, usize)> {
+    let mut p: &[u8] = buf;
+    let before = p.len();
+    let ctype = decode_varint(&mut p)?;
+    let clen = decode_varint(&mut p)? as usize;
+    let header = before - p.len();
+    if p.len() < clen {
+        return None;
+    }
+    Some((ctype, header, header + clen))
+}
+
 async fn writer_loop(mut send: h2::SendStream<Bytes>, mut out_rx: mpsc::UnboundedReceiver<Vec<u8>>) {
     while let Some(pkt) = out_rx.recv().await {
-        let mut ctx = Vec::with_capacity(1);
-        encode_varint(&mut ctx, 0); // context id 0 (full IP packet)
-        let value_len = (ctx.len() + pkt.len()) as u64;
-
-        let mut cap = Vec::with_capacity(pkt.len() + 16);
-        encode_varint(&mut cap, CAPSULE_DATAGRAM);
-        encode_varint(&mut cap, value_len);
-        cap.extend_from_slice(&ctx);
-        cap.extend_from_slice(&pkt);
+        let cap = encode_datagram_capsule(&pkt);
 
         send.reserve_capacity(cap.len());
         while send.capacity() < cap.len() {
@@ -182,30 +195,41 @@ async fn reader_loop(mut recv: h2::RecvStream, in_tx: mpsc::UnboundedSender<Vec<
         let _ = recv.flow_control().release_capacity(data.len());
         buf.extend_from_slice(&data);
 
-        loop {
-            let mut p: &[u8] = &buf;
-            let before = p.len();
-            let (Some(ctype), Some(clen)) = (decode_varint(&mut p), decode_varint(&mut p)) else {
-                break; // incomplete capsule header
-            };
-            let header = before - p.len();
-            let clen = clen as usize;
-            if p.len() < clen {
-                break; // capsule value not fully arrived yet
-            }
-            let value = p[..clen].to_vec();
-            let total = header + clen;
-
+        while let Some((ctype, voff, total)) = parse_capsule(&buf) {
             if ctype == CAPSULE_DATAGRAM {
-                let mut v: &[u8] = &value;
-                if decode_varint(&mut v) == Some(0) {
-                    // context id 0 => the rest is a full IP packet
-                    if in_tx.send(v.to_vec()).is_err() {
-                        return;
-                    }
+                // The capsule value is the bare IP packet (no context id).
+                if in_tx.send(buf[voff..total].to_vec()).is_err() {
+                    return;
                 }
             }
             buf.drain(..total);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn datagram_capsule_roundtrips() {
+        let pkt = b"\x45\x00\x00\x1c-fake-ip-packet";
+        let cap = encode_datagram_capsule(pkt);
+        let (ctype, voff, total) = parse_capsule(&cap).unwrap();
+        assert_eq!(ctype, CAPSULE_DATAGRAM);
+        assert_eq!(total, cap.len());
+        assert_eq!(&cap[voff..total], pkt);
+        // A truncated buffer is not yet parseable.
+        assert!(parse_capsule(&cap[..cap.len() - 1]).is_none());
+    }
+
+    #[test]
+    fn parses_back_to_back_capsules() {
+        let mut buf = encode_datagram_capsule(b"aaa");
+        buf.extend(encode_datagram_capsule(b"bbbb"));
+        let (_, v1, t1) = parse_capsule(&buf).unwrap();
+        assert_eq!(&buf[v1..t1], b"aaa");
+        let (_, v2, t2) = parse_capsule(&buf[t1..]).unwrap();
+        assert_eq!(&buf[t1..][v2..t2], b"bbbb");
     }
 }

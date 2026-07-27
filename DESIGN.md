@@ -115,12 +115,12 @@ the QUIC datagram budget (~1223).
 - **HTTP/2 fallback** (`h2tunnel.rs`, `Transport::Http2`): TCP+TLS (ALPN `h2`),
   same mTLS + pinning. Cloudflare's H2 endpoint does not advertise RFC 8441
   extended CONNECT, so it uses a plain CONNECT + `cf-connect-proto: cf-connect-ip`
-  header (handshake → HTTP 200, verified). The datagram plane uses RFC 9297
-  DATAGRAM capsules but Cloudflare's H2 variant is non-RFC and does not
-  round-trip them yet — **experimental**, needs further reverse-engineering.
+  header (→ HTTP 200). IP packets travel as DATAGRAM capsules (type `0x00`) whose
+  value is the **bare IP packet** — Cloudflare omits the connect-ip context id
+  (non-RFC; matched to the `connect-ip-go` fork). Live-verified end to end:
+  `proxy --http2` → `curl --socks5-hostname … /cdn-cgi/trace` = `warp=on`.
 
-Remaining: complete the H2 datagram framing, the multi-account pool + front LB +
-control API, and the daemon CLI.
+Remaining: the multi-account pool + front LB + control API, and the daemon CLI.
 
 ## Netstack, pool, control (later phases)
 

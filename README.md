@@ -28,9 +28,9 @@ Built bottom-up (see the repo plan). Current state:
       1.1.1.1 for DNS-filtered networks) — `register_auto` / `--doh`
 - [x] IP rotation via re-registration (`register_auto` yields a fresh account;
       live per-slot rotation lands with the pool)
-- [~] HTTP/2 fallback (`--http2`): handshake works (plain CONNECT +
-      `cf-connect-proto` → 200); datagram plane is **experimental** (Cloudflare's
-      H2 is non-RFC and doesn't round-trip standard capsules yet)
+- [x] HTTP/2 fallback (`--http2`) for QUIC-blocked networks: plain CONNECT +
+      `cf-connect-proto` → 200, DATAGRAM capsules with Cloudflare's bare-IP quirk.
+      Live-verified: `proxy --http2` → `warp=on`
 - [ ] account pool + front SOCKS5 LB + control API
 - [ ] library API polish + daemon CLI
 
