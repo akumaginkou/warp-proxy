@@ -1,0 +1,20 @@
+[package]
+name = "warp-proxy"
+description = "Daemon that runs a Cloudflare WARP account pool behind a local SOCKS5 proxy + control API. Portable, no usque."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "warp-proxy"
+path = "src/main.rs"
+
+[dependencies]
+warp-masque = { path = "../warp-masque" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+serde_json.workspace = true
+anyhow.workspace = true
+rand.workspace = true

@@ -1761,6 +1761,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "warp-proxy"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "rand 0.8.7",
+ "serde_json",
+ "tokio",
+ "warp-masque",
+]
+
+[[package]]
 name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

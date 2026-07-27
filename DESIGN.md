@@ -131,7 +131,18 @@ IP / colo / warp state. Live-verified: two egress IPs round-robin, pin sticks,
 WARP-off goes direct (real IP), rotate yields a fresh egress, trace reports
 `warp=on`.
 
-Remaining: library-API polish + the daemon CLI (handshake JSON) and packaging.
+**Phase 4 (done):** the `warp-proxy` daemon (`crates/warp-proxy`) registers or
+loads (`--state-dir`) N accounts, starts the pool + SOCKS5 LB + control API, and
+prints a one-line JSON handshake to stdout (`socksPort`, `controlUrl`,
+`controlToken`) so a parent process (Electron, a browser launcher, a script) can
+wire itself up; it stops on SIGINT/SIGTERM. Accounts persist across restarts.
+The library re-exports the building blocks (`Pool`, `RegistrationClient`,
+`Tunnel`, `Transport`, `NetHandle`, `socks`, `control`). Pure Rust on the `ring`
+provider — native builds need no C toolchain; Windows cross-builds need a mingw
+C compiler for `ring`.
+
+All planned phases are complete; the HTTP/3 path and the multi-account pool are
+the production path, HTTP/2 is the QUIC-blocked fallback.
 
 ## Netstack, pool, control (later phases)
 

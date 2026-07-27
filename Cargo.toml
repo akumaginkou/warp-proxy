@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/warp-masque",
+    "crates/warp-proxy",
 ]
 
 [workspace.package]

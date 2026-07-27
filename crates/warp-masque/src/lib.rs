@@ -29,4 +29,7 @@ pub mod tunnel;
 pub use config::WarpConfig;
 pub use error::{Error, Result};
 pub use keys::DeviceKeypair;
+pub use netstack::NetHandle;
+pub use pool::Pool;
 pub use register::{RegisterOptions, RegistrationClient};
+pub use tunnel::{Transport, Tunnel};
