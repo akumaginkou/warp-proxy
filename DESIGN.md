@@ -102,9 +102,25 @@ SOCKS5 server (`socks.rs`) routes CONNECT through it with **remote DNS** (via th
 smoltcp DNS socket to 1.1.1.1 through the tunnel). Live check:
 `curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace`
 returns `warp=on` at a WARP egress IP (`104.28.x.x`, colo NRT). MTU is clamped to
-the QUIC datagram budget (~1223). Remaining: HTTP/2 fallback, DoH-bypass
-registration, IP rotation, the multi-account pool + front LB + control API, and
-the daemon CLI.
+the QUIC datagram budget (~1223).
+
+**Phase 2 (partial):**
+- **DoH-bypass registration** (`doh.rs`, `RegistrationClient::with_doh_bypass` /
+  `register_auto`): resolve `api.cloudflareclient.com` via DoH over 1.1.1.1
+  (reached by IP, SNI `cloudflare-dns.com`) + baked-in fallback IPs, pin the
+  address while keeping the real TLS SNI. Verified: registration succeeds through
+  the pinned path.
+- **IP rotation**: re-registration (`register_auto`) provisions a fresh account /
+  egress; live per-slot rotation arrives with the pool (Phase 3).
+- **HTTP/2 fallback** (`h2tunnel.rs`, `Transport::Http2`): TCP+TLS (ALPN `h2`),
+  same mTLS + pinning. Cloudflare's H2 endpoint does not advertise RFC 8441
+  extended CONNECT, so it uses a plain CONNECT + `cf-connect-proto: cf-connect-ip`
+  header (handshake → HTTP 200, verified). The datagram plane uses RFC 9297
+  DATAGRAM capsules but Cloudflare's H2 variant is non-RFC and does not
+  round-trip them yet — **experimental**, needs further reverse-engineering.
+
+Remaining: complete the H2 datagram framing, the multi-account pool + front LB +
+control API, and the daemon CLI.
 
 ## Netstack, pool, control (later phases)
 

@@ -14,9 +14,11 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let mut out = String::from("warp-config.json");
     let mut name: Option<String> = None;
+    let mut doh = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--name" => name = args.next(),
+            "--doh" => doh = true,
             other => out = other.to_string(),
         }
     }
@@ -26,9 +28,13 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    eprintln!("Registering a new WARP MASQUE device…");
-    let client = RegistrationClient::with_default_client()?;
-    let cfg = client.register(&opts).await?;
+    let cfg = if doh {
+        eprintln!("Registering via DoH bypass (pinned api.cloudflareclient.com)…");
+        RegistrationClient::with_doh_bypass().await?.register(&opts).await?
+    } else {
+        eprintln!("Registering a new WARP MASQUE device (auto direct→DoH)…");
+        RegistrationClient::register_auto(&opts).await?
+    };
     cfg.save(&out)?;
 
     eprintln!("OK — device {}", cfg.id);

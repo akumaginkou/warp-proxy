@@ -9,22 +9,36 @@
 
 use warp_masque::netstack;
 use warp_masque::socks;
-use warp_masque::tunnel::Tunnel;
+use warp_masque::tunnel::{Transport, Tunnel};
 use warp_masque::{DeviceKeypair, WarpConfig};
 
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
-    let cfg_path = args.next().unwrap_or_else(|| "warp-config.json".into());
-    let bind = args.next().unwrap_or_else(|| "127.0.0.1:1080".into());
+    let mut cfg_path = String::from("warp-config.json");
+    let mut bind = String::from("127.0.0.1:1080");
+    let mut transport = Transport::Http3;
+    let mut positional = 0;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--http2" => transport = Transport::Http2,
+            _ if positional == 0 => {
+                cfg_path = arg;
+                positional += 1;
+            }
+            _ => {
+                bind = arg;
+                positional += 1;
+            }
+        }
+    }
 
     let cfg = WarpConfig::load(&cfg_path)?;
     let kp = DeviceKeypair::from_private_b64(&cfg.private_key)?;
 
-    eprintln!("Establishing MASQUE tunnel…");
-    let tunnel = Tunnel::connect(&cfg, &kp).await?;
+    eprintln!("Establishing MASQUE tunnel ({transport:?})…");
+    let tunnel = Tunnel::connect_with(&cfg, &kp, transport).await?;
     anyhow::ensure!(tunnel.status().is_success(), "tunnel not up: {}", tunnel.status());
     eprintln!("Tunnel up. Assigned {} / {:?}", tunnel.assigned_v4(), tunnel.assigned_v6());
 

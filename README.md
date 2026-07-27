@@ -24,7 +24,13 @@ Built bottom-up (see the repo plan). Current state:
 - [x] userspace netstack (`smoltcp`) + local **SOCKS5 proxy with remote DNS** —
       `curl --socks5-hostname … /cdn-cgi/trace` reports **`warp=on`** at a WARP
       egress IP (live-verified via the `proxy` example)
-- [ ] HTTP/2 fallback, DoH-bypass registration, IP rotation
+- [x] DoH-bypass registration (pin `api.cloudflareclient.com` via DoH over
+      1.1.1.1 for DNS-filtered networks) — `register_auto` / `--doh`
+- [x] IP rotation via re-registration (`register_auto` yields a fresh account;
+      live per-slot rotation lands with the pool)
+- [~] HTTP/2 fallback (`--http2`): handshake works (plain CONNECT +
+      `cf-connect-proto` → 200); datagram plane is **experimental** (Cloudflare's
+      H2 is non-RFC and doesn't round-trip standard capsules yet)
 - [ ] account pool + front SOCKS5 LB + control API
 - [ ] library API polish + daemon CLI
 

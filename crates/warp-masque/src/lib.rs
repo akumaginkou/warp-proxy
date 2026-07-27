@@ -13,7 +13,9 @@
 //! the provenance stays clean.
 
 pub mod config;
+pub mod doh;
 pub mod error;
+pub mod h2tunnel;
 pub mod keys;
 pub mod netstack;
 pub mod register;

@@ -120,8 +120,13 @@ impl ServerCertVerifier for PinnedVerifier {
 }
 
 /// Build the rustls `ClientConfig` for the tunnel: client-auth with the device's
-/// self-signed cert, server trust by pinning `endpoint_pub_key`, ALPN `h3`.
-pub fn tunnel_client_config(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<rustls::ClientConfig> {
+/// self-signed cert, server trust by pinning `endpoint_pub_key`, and the given
+/// ALPN protocol(s) (`b"h3"` for QUIC, `b"h2"` for the HTTP/2 fallback).
+pub fn tunnel_client_config(
+    cfg: &WarpConfig,
+    kp: &DeviceKeypair,
+    alpn: &[&[u8]],
+) -> Result<rustls::ClientConfig> {
     let pinned = p256::PublicKey::from_public_key_pem(cfg.endpoint_pub_key.trim())
         .map_err(|e| Error::Config(format!("endpoint_pub_key not P-256 PEM: {e}")))?;
 
@@ -139,7 +144,7 @@ pub fn tunnel_client_config(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<rust
         .with_client_auth_cert(vec![identity.cert_der], identity.key_der.into())
         .map_err(|e| Error::Config(format!("client auth cert: {e}")))?;
 
-    client.alpn_protocols = vec![b"h3".to_vec()];
+    client.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
     Ok(client)
 }
 

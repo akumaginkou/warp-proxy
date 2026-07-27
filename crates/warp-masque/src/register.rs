@@ -84,6 +84,45 @@ impl RegistrationClient {
         Ok(Self::new(http))
     }
 
+    /// Build a client that reaches `api.cloudflareclient.com` via DoH-resolved
+    /// (and fallback) IPs, pinning the address while keeping the real TLS SNI —
+    /// for networks that poison the API hostname. No admin / hosts-file edit.
+    pub async fn with_doh_bypass() -> Result<Self> {
+        let addrs = crate::doh::api_addrs().await;
+        if addrs.is_empty() {
+            return Err(Error::Response(
+                "DoH bypass could not resolve api.cloudflareclient.com".into(),
+            ));
+        }
+        let http = reqwest::Client::builder()
+            .use_rustls_tls()
+            .resolve_to_addrs(crate::doh::API_HOST, &addrs)
+            .build()
+            .map_err(Error::Http)?;
+        Ok(Self::new(http))
+    }
+
+    /// Register, trying a direct connection first and falling back to the DoH
+    /// bypass if the direct attempt fails (e.g. poisoned DNS).
+    pub async fn register_auto(opts: &RegisterOptions) -> Result<WarpConfig> {
+        let direct = Self::with_default_client()?;
+        match direct.register(opts).await {
+            Ok(cfg) => Ok(cfg),
+            Err(direct_err) => {
+                let bypass = Self::with_doh_bypass().await.map_err(|bypass_err| {
+                    Error::Response(format!(
+                        "direct register failed ({direct_err}); DoH bypass unavailable ({bypass_err})"
+                    ))
+                })?;
+                bypass.register(opts).await.map_err(|bypass_err| {
+                    Error::Response(format!(
+                        "register failed (direct: {direct_err}; doh-bypass: {bypass_err})"
+                    ))
+                })
+            }
+        }
+    }
+
     /// Run the full register + enroll flow and return a ready [`WarpConfig`].
     pub async fn register(&self, opts: &RegisterOptions) -> Result<WarpConfig> {
         let account = self.create_account(opts).await?;

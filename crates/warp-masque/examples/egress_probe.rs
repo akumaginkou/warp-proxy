@@ -14,7 +14,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use warp_masque::tunnel::Tunnel;
+use warp_masque::tunnel::{Transport, Tunnel};
 use warp_masque::{DeviceKeypair, WarpConfig};
 
 const RESOLVER: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
@@ -24,11 +24,19 @@ const CLASS_CH: u16 = 3;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "warp-config.json".into());
+    let mut path = String::from("warp-config.json");
+    let mut transport = Transport::Http3;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--http2" => transport = Transport::Http2,
+            other => path = other.to_string(),
+        }
+    }
     let cfg = WarpConfig::load(&path)?;
     let kp = DeviceKeypair::from_private_b64(&cfg.private_key)?;
 
-    let tunnel = Tunnel::connect(&cfg, &kp).await?;
+    eprintln!("Connecting ({transport:?})…");
+    let tunnel = Tunnel::connect_with(&cfg, &kp, transport).await?;
     anyhow::ensure!(tunnel.status().is_success(), "tunnel not up: {}", tunnel.status());
     let src = tunnel.assigned_v4();
     eprintln!("Tunnel up. Assigned WARP IPv4: {src}");

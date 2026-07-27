@@ -104,7 +104,7 @@ pub async fn dial_quic(
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
     let addr = quic_endpoint(cfg)?;
 
-    let crypto = tunnel_client_config(cfg, kp)?;
+    let crypto = tunnel_client_config(cfg, kp, &[b"h3"])?;
     let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
         .map_err(|e| Error::Tunnel(format!("quic tls config: {e}")))?;
     let mut client_cfg = quinn::ClientConfig::new(Arc::new(quic_crypto));
@@ -157,27 +157,49 @@ pub async fn dial_quic(
 /// [`send_ip`]: Tunnel::send_ip
 /// [`recv_ip`]: Tunnel::recv_ip
 pub struct Tunnel {
-    quic: quinn::Connection,
-    quarter_stream_id: u64,
+    io: TunnelIo,
     status: http::StatusCode,
     assigned_v4: Ipv4Addr,
     assigned_v6: Option<Ipv6Addr>,
-    // Kept alive for the tunnel's lifetime: the endpoint drives QUIC I/O, the
-    // driver services HTTP/3 control streams, and the request stream must stay
-    // open to keep the CONNECT-IP session associated.
-    _endpoint: quinn::Endpoint,
-    _driver: tokio::task::JoinHandle<()>,
-    _stream: Box<dyn std::any::Any + Send>,
-    // h3 closes the connection once the last SendRequest handle is dropped, so
-    // the tunnel must hold onto it for its lifetime.
-    _send_request: Box<dyn std::any::Any + Send>,
+    // Keep-alive resources held for the tunnel's lifetime (QUIC endpoint + h3
+    // driver + streams for HTTP/3; the connection driver + pump tasks for
+    // HTTP/2). Dropping the tunnel tears them down.
+    _keep: Vec<Box<dyn std::any::Any + Send>>,
 }
 
 impl Tunnel {
-    /// Perform the full handshake: QUIC dial (mTLS + pinning) → HTTP/3 with
-    /// datagrams → Extended CONNECT `:protocol=cf-connect-ip`. On HTTP 200 the
-    /// tunnel is ready to carry IP packets.
+    /// Establish the tunnel over the default transport (HTTP/3).
     pub async fn connect(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<Tunnel> {
+        Self::connect_with(cfg, kp, Transport::Http3).await
+    }
+
+    /// Establish the tunnel over an explicit [`Transport`] (`Http3`, or `Http2`
+    /// for QUIC-blocked networks).
+    pub async fn connect_with(
+        cfg: &WarpConfig,
+        kp: &DeviceKeypair,
+        transport: Transport,
+    ) -> Result<Tunnel> {
+        match transport {
+            Transport::Http3 => Self::connect_h3(cfg, kp).await,
+            Transport::Http2 => crate::h2tunnel::connect_h2(cfg, kp).await,
+        }
+    }
+
+    /// Assemble a tunnel from its I/O half + keep-alive resources.
+    pub(crate) fn from_parts(
+        io: TunnelIo,
+        status: http::StatusCode,
+        assigned_v4: Ipv4Addr,
+        assigned_v6: Option<Ipv6Addr>,
+        keep: Vec<Box<dyn std::any::Any + Send>>,
+    ) -> Tunnel {
+        Tunnel { io, status, assigned_v4, assigned_v6, _keep: keep }
+    }
+
+    /// HTTP/3 handshake: QUIC dial (mTLS + pinning) → datagrams → Extended
+    /// CONNECT `:protocol=cf-connect-ip`. On HTTP 200 the tunnel is ready.
+    async fn connect_h3(cfg: &WarpConfig, kp: &DeviceKeypair) -> Result<Tunnel> {
         let (endpoint, quic) = dial_quic(cfg, kp).await?;
 
         // Clone the connection handle for raw QUIC datagrams; h3-quinn's own
@@ -223,17 +245,19 @@ impl Tunnel {
         let assigned_v4 = parse_assigned_v4(&cfg.ipv4)?;
         let assigned_v6 = parse_assigned_v6(&cfg.ipv6);
 
-        Ok(Tunnel {
-            quic: dgram_conn,
-            quarter_stream_id,
+        Ok(Tunnel::from_parts(
+            TunnelIo::H3(H3Io { quic: dgram_conn, quarter_stream_id }),
             status,
             assigned_v4,
             assigned_v6,
-            _endpoint: endpoint,
-            _driver: driver_handle,
-            _stream: Box::new(stream),
-            _send_request: Box::new(send_request),
-        })
+            vec![
+                Box::new(endpoint),
+                Box::new(driver_handle),
+                Box::new(stream),
+                // h3 closes the connection once the last SendRequest is dropped.
+                Box::new(send_request),
+            ],
+        ))
     }
 
     /// The HTTP status the endpoint returned to the Extended CONNECT (200 = up).
@@ -255,38 +279,70 @@ impl Tunnel {
     /// tunnel's keep-alive resources. Hand these to the netstack / feeder while
     /// the owning [`Tunnel`] stays alive on the main task.
     pub fn io(&self) -> TunnelIo {
-        TunnelIo {
-            quic: self.quic.clone(),
-            quarter_stream_id: self.quarter_stream_id,
-        }
+        self.io.clone()
     }
 
-    /// The largest IP packet that fits in one QUIC datagram.
+    /// The largest IP packet the tunnel can carry in one datagram.
     pub fn max_ip_packet(&self) -> usize {
-        self.io().max_ip_packet()
+        self.io.max_ip_packet()
     }
 
     /// Send one IP packet through the tunnel.
     pub fn send_ip(&self, packet: &[u8]) -> Result<()> {
-        self.io().send_ip(packet)
+        self.io.send_ip(packet)
     }
 
     /// Receive one IP packet from the tunnel.
     pub async fn recv_ip(&self) -> Result<Vec<u8>> {
-        self.io().recv_ip().await
+        self.io.recv_ip().await
     }
 }
 
-/// Datagram I/O half of a [`Tunnel`]: send/receive IP packets, framed as
-/// `varint(quarter_stream_id) || varint(context_id=0) || IP`. Cloneable and
+/// Datagram I/O half of a [`Tunnel`], over either transport. Cloneable and
 /// thread-safe; valid only while the owning [`Tunnel`] is alive.
 #[derive(Clone)]
-pub struct TunnelIo {
+pub enum TunnelIo {
+    /// HTTP/3 (QUIC datagrams).
+    H3(H3Io),
+    /// HTTP/2 fallback (capsules over the CONNECT stream).
+    H2(crate::h2tunnel::H2Io),
+}
+
+impl TunnelIo {
+    /// The largest IP packet the transport can carry in one datagram/capsule.
+    pub fn max_ip_packet(&self) -> usize {
+        match self {
+            TunnelIo::H3(io) => io.max_ip_packet(),
+            TunnelIo::H2(io) => io.max_ip_packet(),
+        }
+    }
+
+    /// Send one IP packet through the tunnel.
+    pub fn send_ip(&self, packet: &[u8]) -> Result<()> {
+        match self {
+            TunnelIo::H3(io) => io.send_ip(packet),
+            TunnelIo::H2(io) => io.send_ip(packet),
+        }
+    }
+
+    /// Receive one IP packet from the tunnel.
+    pub async fn recv_ip(&self) -> Result<Vec<u8>> {
+        match self {
+            TunnelIo::H3(io) => io.recv_ip().await,
+            TunnelIo::H2(io) => io.recv_ip().await,
+        }
+    }
+}
+
+/// HTTP/3 datagram I/O: IP packets framed as
+/// `varint(quarter_stream_id) || varint(context_id=0) || IP` in QUIC datagrams.
+#[derive(Clone)]
+pub struct H3Io {
     quic: quinn::Connection,
     quarter_stream_id: u64,
 }
 
-impl TunnelIo {
+impl H3Io {
     /// The largest IP packet that fits in one QUIC datagram (accounting for the
     /// quarter-stream-id + context-id varints).
     pub fn max_ip_packet(&self) -> usize {
@@ -337,20 +393,20 @@ impl TunnelIo {
     }
 }
 
-fn parse_assigned_v4(s: &str) -> Result<Ipv4Addr> {
+pub(crate) fn parse_assigned_v4(s: &str) -> Result<Ipv4Addr> {
     let addr = s.trim().split('/').next().unwrap_or("").trim();
     addr.parse::<Ipv4Addr>()
         .map_err(|e| Error::Config(format!("assigned ipv4 {s:?}: {e}")))
 }
 
-fn parse_assigned_v6(s: &str) -> Option<Ipv6Addr> {
+pub(crate) fn parse_assigned_v6(s: &str) -> Option<Ipv6Addr> {
     s.trim().split('/').next()?.trim().parse::<Ipv6Addr>().ok()
 }
 
 // ---- QUIC variable-length integers (RFC 9000 §16) --------------------------
 
 /// Append `v` as a QUIC varint.
-fn encode_varint(out: &mut Vec<u8>, v: u64) {
+pub(crate) fn encode_varint(out: &mut Vec<u8>, v: u64) {
     if v < 1 << 6 {
         out.push(v as u8);
     } else if v < 1 << 14 {
@@ -363,7 +419,7 @@ fn encode_varint(out: &mut Vec<u8>, v: u64) {
 }
 
 /// Number of bytes `encode_varint` would use for `v`.
-fn varint_len(v: u64) -> usize {
+pub(crate) fn varint_len(v: u64) -> usize {
     if v < 1 << 6 {
         1
     } else if v < 1 << 14 {
@@ -377,7 +433,7 @@ fn varint_len(v: u64) -> usize {
 
 /// Read a QUIC varint from the front of `buf`, advancing it. Returns None if
 /// truncated.
-fn decode_varint(buf: &mut &[u8]) -> Option<u64> {
+pub(crate) fn decode_varint(buf: &mut &[u8]) -> Option<u64> {
     let first = *buf.first()?;
     let len = 1usize << (first >> 6);
     if buf.len() < len {
